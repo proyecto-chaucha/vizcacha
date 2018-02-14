@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>VizcaCHA</title>
+    <!-- https://stackoverflow.com/questions/32621988/electron-jquery-is-not-defined -->
+    <script>if (typeof module === 'object') { window.module = module; module = undefined; }</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.0.4/socket.io.js"></script>
+
+    <script>if (window.module) module = window.module;</script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.6.2/css/bulma.min.css">
+
+    <style>
+        dl {
+      width: 100%;
+      overflow: hidden;
+      padding: 0;
+      margin: 0
+    }
+    dt {
+      float: left;
+      width: 50%;
+      /* adjust the width; make sure the total of both is 100% */
+      padding: 0;
+      margin: 0;
+      font-weight:600;
+    }
+    dd {
+      float: left;
+      width: 50%;
+      /* adjust the width; make sure the total of both is 100% */
+      padding: 0;
+      margin: 0
+    }
+    </style>
+  </head>
+  <body style="background: url('assets/bg.png') no-repeat 2em 1.5cm fixed;background-position:right bottom;background-size:300px auto;  background-blend-mode: multiply;">
+    <div class="container">
+      <div class="columns">
+        <div class="column is-7" style="margin-top:10px">
+          <div id="prices-content" style="height: 550px;overflow-y: scroll;">
+            <div id="prices-main" style="height:auto">
+              <table class="table is-striped is-hoverable" style="width:100%">
+                <thead>
+                  <tr>
+                    <td>Fecha</td>
+                    <td>Compra</td>
+                    <td>Venta</td>
+                    <td>Promedio</td>
+                  </tr>
+                </thead>
+                <tbody id="data">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="column is-5" style="margin-left:10px;margin-top:10px">
+          <div class="columns">
+            <div class="column">
+              <h3 class="title is-3">VizcaCHA</h3>
+              <dl>
+                <dt>Compra</dt>
+                <dd>CLP <span id="buy">$0</span></dd>
+                <dt>Venta</dt>
+                <dd>CLP <span id="sell">$0</span></dd>
+                <dt>Promedio</dt>
+                <dd>CLP <span id="mid">$0</span></dd>
+              </dl>
+            </div>
+           </div>
+
+          <div class="columns">
+            <div class="column">
+              <label for="notify" class="checkbox">¿Activar Notificaciones?
+                <input type="checkbox" id="notify" name="notify">
+              </label>
+            </div>
+          </div>
+
+           <div class="columns">
+            <div class="column">
+              <p style="padding-bottom:10px">
+                Almacenar los valores en un archivo csv
+              </p>
+              <div class="file has-name is-boxed is-small is-primary">
+                <label class="file-label">
+                  <input id="csv" class="file-input" type="file" name="data" accept="text/csv">
+                  <span class="file-cta">
+                    <span class="file-label">
+                      Seleccionar CSV…
+                    </span>
+                  </span>
+                  <span class="file-name" id="filename">
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="columns">
+            <div class="column">
+                            <dl>
+                              <dt>Programación</dt>
+                              <dd>Camilo Castro</dd>
+                              <dt>Arte</dt>
+                              <dd>
+                                <a href="https://www.fb.com/leo8bits" target="_blank">Leo8bits</a>
+                              </dd>
+                              <dt>API</dt>
+                              <dd>
+                                <a href="http://chaucha.cash" target="_blank">Chaucha.cash</a>
+                              </dd>
+                            </dl>
+                            <p style="margin-top:20px">
+                            Creado por <a style="color:#333;background-color:#ccc" href="https://chaucha.cl" target="_blank">Chaucha.cl</a>
+                            </p>
+                            <p>
+                               Disponible en
+                              <a style="color:#333;background-color:#ccc" href="https://github.com/proyecto-chaucha/vizcacha" target="_blank">Github</a>
+                            </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      let shell = require('electron').shell;
+      let fs = require('fs');
+      let eol = require('os').EOL;
+      let csv = null;
+
+        //open links externally by default
+      $(document).on('click', 'a[target="_blank"]', function (event) {
+        event.preventDefault();
+        shell.openExternal(this.href);
+      });
+
+      $(document).ready(function() {
+        let input = $('#csv');
+        input.on('change', function(event){
+          console.log('file uploaded');
+          let file = input.prop('files')[0];
+          console.log(file);
+          if(!file)
+          {
+            alert('Archivo no encontrado');
+            return;
+          }
+          csv = file;
+          
+          $('#filename').html(csv.name);
+          let stats = fs.statSync(csv.path);
+          if(stats.size <= 0)
+          {
+            fs.appendFile(csv.path, `Fecha;Compra;Venta;Promedio${eol}`, function (err) {
+              if (err) {
+                return console.log(err);
+              }
+            });
+          }
+        });
+      });
+
+      $(document).ready(function () {
+        
+        let chaucha = io.connect('https://api.chaucha.cash/realtime', { reconnet: true });
+
+        let buyCache = 0;
+        let sellCache = 0;
+        let midCache = 0;
+
+        let max = 500;
+        let count = 0;
+
+        chaucha.on('NewPrice-CLPCHA', function (value) {
+
+          let clp = require('numberToCLPFormater').numberToCLPFormater;
+          let ts = new Date(value.Timestamp);
+          let buy = value.Data.marketOrderBook.buy[0].limitPrice;
+          let sell = value.Data.marketOrderBook.sell[0].limitPrice;
+          let mid = value.Data.marketOrderBook.mid;
+          
+          let changed = false;
+          let notify = $('#notify').is(':checked');
+
+          if(buy != buyCache)
+          {
+            buyCache = buy;
+            changed = true;
+            if (notify) {
+              let myNotification = new Notification('Nuevo Precio de Compra', {
+                body: `CLP ${clp(buy)}`
+              });
+            }
+          }
+
+          if(sell != sellCache)
+          {
+            sellCache = sell;
+            changed = true;
+            if (notify) {
+              let myNotification = new Notification('Nuevo Precio de Venta', {
+                body: `CLP ${clp(sell)}`
+              });
+            }
+          }
+
+          if(mid != midCache)
+          {
+            midCache = mid;
+            changed = true;
+          }
+          
+          if(changed)
+          {
+            count = count + 1;
+            if(count >= max) 
+            {
+              $('#data').empty();
+              count = 0;
+            }
+
+            $('#data').prepend(`
+              <tr>
+                <td>${ts.toLocaleString()}</td>
+                <td>${clp(buy)}</td>
+                <td>${clp(sell)}</td>
+                <td>${clp(mid)}</td>
+              </tr>`
+            );
+
+            $('#buy').html(clp(buy));
+            $('#sell').html(clp(sell));
+            $('#mid').html(clp(mid));
+            document.title = `VizcaCHA  · CLP $${mid}`;
+
+            if(csv)
+            {
+
+              let stream = fs.createWriteStream(csv.path, {'flags' : 'a'});
+              stream.once('open', function(filedescriptor) {
+                let data = `${ts.toLocaleString()};${buy};${sell};${mid}${eol}`;
+                console.log(data);
+                stream.write(data);
+                stream.end();
+              });
+            }
+          }
+        });
+    });
+    </script>
+  </body>
+</html>
